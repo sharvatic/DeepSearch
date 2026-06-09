@@ -1,0 +1,10 @@
+# Python bytecode (handles any __pycache__ folder at any depth)
+**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# SearXNG local volume data
+# (Adjust the directory name if your local volume folder is named differently)
+searxng-data/
+searxng/
