@@ -1,7 +1,6 @@
 from qdrant_client import QdrantClient
-import json, re
+import json
 import traceback
-from typing import Optional, Dict, Any
 
 try:
     from state import AgentState
@@ -15,45 +14,6 @@ except ImportError:
     from Agent.embeddings import get_embeddings
     from Agent.config import COLLECTION_NAME
     from Agent.prompts import analyst_prompt, gap_prompt
-
-def extract_confidence_score(analyst_output: str) -> Optional[float]:
-    """
-    Extracts the confidence score from the analyst node's raw string output
-    using the explicit metric boundaries.
-    """
-    # Regex to capture everything between the metric markers cleanly
-    pattern = r"### METRICS_START\s*(\{.*?\})\s*### METRICS_END"
-    
-    # Using re.DOTALL to ensure match covers newlines within the JSON block
-    match = re.search(pattern, analyst_output, re.DOTALL)
-    
-    if not match:
-        print("Error: Metric markers not found in analyst output.")
-        return None
-        
-    json_string = match.group(1)
-    
-    try:
-        # Parse the extracted string into a Python dict
-        metrics_data: Dict[str, Any] = json.loads(json_string)
-        
-        # Extract the float score safely
-        confidence_score = metrics_data.get("confidence_score")
-        
-        if confidence_score is not None:
-            return float(confidence_score)
-        else:
-            print("Error: 'confidence_score' key missing inside the metrics JSON.")
-            return None
-            
-    except json.JSONDecodeError as e:
-        print(f"Error parsing metrics JSON: {e}")
-        # Fallback: simple backup regex if the LLM malformed the JSON slightly
-        backup_match = re.search(r'"confidence_score":\s*([0-9.]+)', json_string)
-        if backup_match:
-            return float(backup_match.group(1))
-        return None
-
 
 THRESHOLD = 0.70
 
@@ -90,12 +50,20 @@ def analyzer(state: AgentState):
             
             for result in search_results:
                 payload = getattr(result, "payload", {}) or {}
-                if payload.get("parent_text"):
-                    retrieved_chunks.append(payload.get("parent_text"))
+                parent_id = payload.get("parent_id")
+                parent_text = payload.get("parent_text")
+                if parent_id and parent_text:
+                    retrieved_chunks.append((parent_id, parent_text))
     except Exception as e:
         print(f"[Analyst Qdrant Warning]: Vector search skipped ({e}). Operating with direct context.")
-            
-    unique_chunks = list(dict.fromkeys(retrieved_chunks))
+
+    seen_parent_ids = set()
+    unique_chunks = []
+    for parent_id, parent_text in retrieved_chunks:
+        if parent_id not in seen_parent_ids:
+            seen_parent_ids.add(parent_id)
+            unique_chunks.append(parent_text)
+
     # Keep enough evidence for analysis while leaving the model room to finish its JSON.
     unified_context = "\n\n---\n\n".join(unique_chunks)[:12000]
     

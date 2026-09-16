@@ -36,10 +36,15 @@ parent_safety_splitter = RecursiveCharacterTextSplitter(
 
 # 2. Granular Child Splitter: Sub-chunks parent sections into precise vector targets
 child_splitter = RecursiveCharacterTextSplitter(
-    chunk_size=700, 
+    chunk_size=700,
     chunk_overlap=100,
     separators=["\n\n", "\n", ". ", " ", ""]
 )
+
+# Noise/size guards for chunk volume control
+MIN_PARENT_WORDS = 25
+MIN_CHILD_WORDS = 10
+PARENT_SAFETY_CHAR_THRESHOLD = 2500
 
 
 async def scrape_and_save_crawl4ai(state: AgentState) -> AgentState:
@@ -111,19 +116,32 @@ async def scrape_and_save_crawl4ai(state: AgentState) -> AgentState:
             fallback_splitter = RecursiveCharacterTextSplitter(chunk_size=1200, chunk_overlap=150)
             parent_chunks = fallback_splitter.split_text(markdown_text)
         else:
-            parent_chunks = [p.page_content for p in parent_docs]
+            raw_parent_chunks = [p.page_content for p in parent_docs]
+            # Safety-split any header section that grew too large because an
+            # intermediate header was missing on the page
+            parent_chunks = []
+            for chunk in raw_parent_chunks:
+                if len(chunk) > PARENT_SAFETY_CHAR_THRESHOLD:
+                    parent_chunks.extend(parent_safety_splitter.split_text(chunk))
+                else:
+                    parent_chunks.append(chunk)
+
+        # Noise filter: drop orphan titles, nav fragments, cookie popups
+        parent_chunks = [p for p in parent_chunks if len(p.split()) >= MIN_PARENT_WORDS]
 
         for sec_idx, parent_text in enumerate(parent_chunks):
             # Deterministic Parent ID
             parent_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"{url}_p_{sec_idx}"))
-            
+
             # Split parent into small child chunks for vector retrieval
             child_chunks = child_splitter.split_text(parent_text)
+            child_chunks = [c for c in child_chunks if len(c.split()) >= MIN_CHILD_WORDS]
 
             for child_idx, child_text in enumerate(child_chunks):
-                # Deterministic Child ID based on content to prevent duplicate vectors
-                child_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{url}_{parent_id}_{child_text}"))
-                
+                # Deterministic Child ID based on URL + positional slot, so re-scraping
+                # the same section overwrites the existing point instead of orphaning it
+                child_id = str(uuid.uuid5(uuid.NAMESPACE_URL, f"{url}_p{sec_idx}_c{child_idx}"))
+
                 prepared_chunks.append({
                     "child_id": child_id,
                     "child_text": child_text,
