@@ -1,7 +1,12 @@
-from Agent.main import AgentState
-from prompts import planner_prompt, planner_prompt_repeated
+try:
+    from state import AgentState
+    from models import llm
+    from prompts import planner_prompt, planner_prompt_repeated
+except ImportError:
+    from Agent.state import AgentState
+    from Agent.models import llm
+    from Agent.prompts import planner_prompt, planner_prompt_repeated
 from langchain_core.messages import SystemMessage, HumanMessage
-from Agent.main import llm
 import json
 
 
@@ -12,7 +17,7 @@ def planner(state: AgentState):
     
     it_count = state.get("iteration_count", 0)
     missing_report = state.get("missing_report", "No missing details reported.")
-    planner_queries = state.get("planner_queries", [])
+    planner_queries = state.get("search_queries", [])
     
     if it_count > 0:
         missing_report = state.get("missing_report", "No missing details reported.")
